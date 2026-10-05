@@ -15,44 +15,60 @@ param(
 )
 
 # ==================== 用户配置区 (关键参数) ====================
+# 以下为虚构示例: ValleyKit —— 一款虚构的《星露谷物语》(Stardew Valley) 模组管理器
+# (星露谷物语官方默许 SMAPI 模组生态; 请把所有路径/残留项替换成你自己目标程序的值)
+
 # [必填] 旧程序目录: 将被删除, 新版也部署到此原位置
-$DeleteDir    = 'D:\all\game\game_tool\Rocket'
+$DeleteDir    = 'D:\Games\ValleyKit'
 
 # [可选] 要保留的 Mods 目录; 留空 '' 表示不备份/不还原
 #        若该目录在执行时不存在, 部署后会在原位置创建同名空文件夹
-$BackupSrc    = 'D:\all\game\game_tool\Rocket\backing\Mods'
+$BackupSrc    = 'D:\Games\ValleyKit\Mods'
 
-# [必填] 备份压缩包的临时存放目录 (必须在 $DeleteDir 之外, 否则会被一起删除)
-$BackupDst    = 'D:\all\game\game_tool\R_B'
+# [条件必填] 备份压缩包的存放目录 (指定了 $BackupSrc 时必填; 必须在 $DeleteDir 之外)
+$BackupDst    = 'D:\Backup\ModArchives'
 
 # [必填] 新版程序压缩包路径 (7z 支持的格式: .7z/.zip/.rar 等)
-$ArchivePath  = 'D:\all\game\game_tool\R_B\Rocket.zip'
+$ArchivePath  = 'C:\Users\YourName\Downloads\ValleyKit_v2.0.zip'
 
 # [可选] 7z.exe 完整路径; 留空 '' 自动探测
 $SevenZip     = ''
 
-# ---------- 残留清理示例 (按目标程序实际情况修改) ----------
+# ---------- 残留清理 (按目标程序实际情况修改; 均为可选项) ----------
 # 要停止并删除的 Windows 服务名数组; 没有则写 @()
-# 示例: 某网络抓包驱动安装了内核服务 -> @('WinDivert','WinDivert14')
-$ServiceNames = @('WinDivert', 'WinDivert14')
+# 示例(虚构): 某管理器自带了一个后台更新服务 -> @('VKHelperSvc')
+$ServiceNames = @('VKHelperSvc')
 
 # 要删除的注册表"值": 仅删除该值, 不删除主键; 不清理则把 $RegKey 留空 ''
-# 示例: 程序在 HKLM 下写入机器码
-$RegKey       = 'HKLM:\SOFTWARE\SystemRuntimeData'
-$RegValueName = 'Rocket_id'
+# 键使用 PSDrive 前缀: HKLM:\... 或 HKCU:\...
+# 示例(虚构): 程序在 HKCU 下写入设备标识
+$RegKey       = 'HKCU:\SOFTWARE\ValleyKit'
+$RegValueName = 'DeviceId'
 
 # 要删除的桌面快捷方式名称 (不含 .lnk); 没有则留空 ''
-$ShortcutName = 'Rocket'
+$ShortcutName = 'ValleyKit'
 
-# ---------- 选项 ----------
-$KeepBackup   = $false   # $true = 还原成功后保留备份压缩包; 默认还原验证通过后删除
+# ---------- 可选项 ----------
+# 新版暂存解压目录: 留空 '' 使用系统 %TEMP%
+# (系统盘空间紧张时可改到其它盘; 必须是绝对路径且不能位于 $DeleteDir 之内)
+$StageDir        = ''
+
+# 新版压缩包归档目录: 全部流程成功后, 把新版压缩包移动到此目录保存
+# 留空 '' = 压缩包保留在原位不动; 与压缩包所在目录相同则跳过
+$NewVersionStore = ''
+
+# 是否保留临时生成的 Mods 备份压缩包:
+# $false(默认) = 还原并校验通过后删除备份包; $true = 保留 (路径见日志)
+$KeepBackup      = $false
 # ==============================================================
 
 # 路径规整
-$DeleteDir   = "$DeleteDir".TrimEnd('\')
-$BackupSrc   = "$BackupSrc".TrimEnd('\')
-$BackupDst   = "$BackupDst".TrimEnd('\')
-$ArchivePath = "$ArchivePath".TrimEnd('\')
+$DeleteDir       = "$DeleteDir".TrimEnd('\')
+$BackupSrc       = "$BackupSrc".TrimEnd('\')
+$BackupDst       = "$BackupDst".TrimEnd('\')
+$ArchivePath     = "$ArchivePath".TrimEnd('\')
+$StageDir        = "$StageDir".TrimEnd('\')
+$NewVersionStore = "$NewVersionStore".TrimEnd('\')
 
 # ---------- 自提权 (管理员) ----------
 $wid = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -69,7 +85,8 @@ try { chcp 65001 > $null; [Console]::OutputEncoding = [System.Text.Encoding]::UT
 # ---------- 派生变量 ----------
 $Ts      = Get-Date -Format 'yyyyMMdd_HHmmss'
 $LogFile = Join-Path $PSScriptRoot "SimpleModReplacer_$Ts.log"
-$Stage   = Join-Path $env:TEMP "SMR_stage_$Ts"
+$StageRoot = if ($StageDir) { $StageDir } else { $env:TEMP }
+$Stage     = Join-Path $StageRoot "SMR_stage_$Ts"
 
 # ---------- 日志 ----------
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -188,14 +205,40 @@ if ($ServiceNames.Count -gt 0) { Write-Log ("  [信息] 将清理服务: {0}" -f
 if ($RegKey) { Write-Log "  [信息] 将清理注册表值: $RegKey -> $RegValueName" }
 if ($ShortcutName) { Write-Log "  [信息] 将清理桌面快捷方式: $ShortcutName.lnk" }
 
-# 7. 磁盘空间 (仅警告)
+# 7. 暂存目录 (可选项; 不能位于待删除目录之内, 否则步骤3会连同暂存内容一起删掉)
+if ($StageDir) {
+    if (-not [System.IO.Path]::IsPathRooted($StageDir)) {
+        $preErrors += "`$StageDir 必须是绝对路径: $StageDir"
+    } elseif ($StageDir -ieq $DeleteDir -or $StageDir.StartsWith($DeleteDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $preErrors += "`$StageDir 不能位于 `$DeleteDir 之内(暂存内容会被一起删除): $StageDir"
+    } else {
+        Write-Log "  [信息] 暂存目录: $StageRoot"
+    }
+} else {
+    Write-Log "  [信息] 暂存目录(默认): $StageRoot"
+}
+
+# 8. 新版压缩包归档目录 (可选项; 不能位于待删除目录之内; 不能等于压缩包自身路径)
+if ($NewVersionStore) {
+    if (-not [System.IO.Path]::IsPathRooted($NewVersionStore)) {
+        $preErrors += "`$NewVersionStore 必须是绝对路径: $NewVersionStore"
+    } elseif ($NewVersionStore -ieq $DeleteDir -or $NewVersionStore.StartsWith($DeleteDir + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $preErrors += "`$NewVersionStore 不能位于 `$DeleteDir 之内: $NewVersionStore"
+    } elseif ($NewVersionStore -ieq (Split-Path $ArchivePath -Parent)) {
+        $preWarns += "`$NewVersionStore 与压缩包当前所在目录相同, 归档步骤将跳过: $NewVersionStore"
+    } else {
+        Write-Log "  [信息] 成功后压缩包将归档到: $NewVersionStore"
+    }
+}
+
+# 9. 磁盘空间 (仅警告; 暂存盘 + 目标盘)
 if (Test-Path -LiteralPath $ArchivePath -PathType Leaf) {
     $arcLen = (Get-Item -LiteralPath $ArchivePath).Length
-    $tempFree = Get-FreeGB $env:TEMP
-    $tgtFree  = Get-FreeGB $DeleteDir
-    $needGB   = [math]::Round($arcLen * 1.5 / 1GB, 2)
-    if ($tempFree -ge 0 -and $tempFree -lt $needGB) { $preWarns += "临时盘($env:TEMP) 剩余 $tempFree GB, 建议预留 $needGB GB 以上" }
-    if ($tgtFree  -ge 0 -and $tgtFree  -lt $needGB) { $preWarns += "目标盘剩余 ${tgtFree}GB, 建议预留 ${needGB}GB 以上" }
+    $stageFree = Get-FreeGB $StageRoot
+    $tgtFree   = Get-FreeGB $DeleteDir
+    $needGB    = [math]::Round($arcLen * 1.5 / 1GB, 2)
+    if ($stageFree -ge 0 -and $stageFree -lt $needGB) { $preWarns += "暂存盘($StageRoot) 剩余 $stageFree GB, 建议预留 $needGB GB 以上" }
+    if ($tgtFree   -ge 0 -and $tgtFree   -lt $needGB) { $preWarns += "目标盘剩余 $tgtFree GB, 建议预留 $needGB GB 以上" }
 }
 
 Write-Log '  ............................................................'
@@ -213,11 +256,12 @@ $desktop  = [Environment]::GetFolderPath('Desktop')
 $Shortcut = Join-Path $desktop "$($ShortcutName).lnk"
 Write-Log '将执行以下操作:'
 Write-Log "  1. 备份 Mods : $BackupSrc -> $BackupDst"
-Write-Log "  2. 暂存解压新版(验证通过前不碰旧程序): $ArchivePath"
+Write-Log "  2. 暂存解压新版(验证通过前不碰旧程序): $ArchivePath -> $StageRoot"
 Write-Log "  3. 删除残留  : 服务[$($ServiceNames -join ', ')] / 快捷方式 / 注册表值 / 旧目录 $DeleteDir"
 Write-Log "  4. 部署新版到: $DeleteDir"
 Write-Log "  5. 还原 Mods 到原位置 (源不存在则创建空文件夹)"
-if (-not $KeepBackup) { Write-Log '  6. 还原验证通过后删除备份压缩包' }
+if ($KeepBackup) { Write-Log '  6a. 按配置保留 Mods 备份压缩包' } else { Write-Log '  6a. 还原验证通过后删除 Mods 备份压缩包' }
+if ($NewVersionStore) { Write-Log "  6b. 新版压缩包归档到: $NewVersionStore" }
 
 if (-not ($Yes -or $AutoConfirm)) {
     Write-Host ''
@@ -383,6 +427,30 @@ if (-not $BackupSrc) {
     if (Test-Path -LiteralPath $BackupSrc) {
         $mcnt = @(Get-ChildItem -LiteralPath $BackupSrc -Force -ErrorAction SilentlyContinue).Count
         Write-Log "  [校验] Mods 目录就绪 (共 $mcnt 项): $BackupSrc"
+    }
+}
+Write-Log '------------------------------------------------------------'
+
+# ---------- 步骤6: 新版压缩包归档 (可选; 全部成功后执行) ----------
+Write-Log '[步骤6] 新版压缩包归档'
+if (-not $NewVersionStore) {
+    Write-Log '  [跳过] 未配置 $NewVersionStore, 压缩包保留原位'
+} elseif (-not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
+    Write-Log "  [跳过] 压缩包已不在原位置: $ArchivePath"
+} else {
+    $arcDir = Split-Path $ArchivePath -Parent
+    if ($arcDir -ieq $NewVersionStore) {
+        Write-Log "  [跳过] 归档目录与压缩包当前目录相同: $NewVersionStore"
+    } else {
+        try {
+            if (-not (Test-Path -LiteralPath $NewVersionStore)) {
+                New-Item -ItemType Directory -Path $NewVersionStore -Force | Out-Null
+            }
+            Move-Item -LiteralPath $ArchivePath -Destination $NewVersionStore -Force -ErrorAction Stop
+            Write-Log "  [OK] 新版压缩包已归档: $(Join-Path $NewVersionStore (Split-Path $ArchivePath -Leaf))"
+        } catch {
+            Write-Log "  [警告] 压缩包归档失败(不影响部署结果): $($_.Exception.Message)"
+        }
     }
 }
 Write-Log '------------------------------------------------------------'
