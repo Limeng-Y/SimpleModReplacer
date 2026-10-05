@@ -1,20 +1,20 @@
 ﻿# ============================================================
-#  Simple Mod Replacer - 通用程序(Mod)一键替换工具
-#  安全流程:
-#    预检(不改动任何东西) -> 用户确认
-#    -> 备份 Mods 并校验压缩包完整性
-#    -> 先把新版压缩包解压到临时目录并验证(成功后才动旧程序)
-#    -> 删除服务/快捷方式/注册表/旧程序目录
-#    -> 部署新版 -> 还原 Mods -> 删除备份包
+#  Simple Mod Replacer
+#  流程:
+#    预检(不修改任何文件) -> 确认
+#    -> 备份 Mods 并校验备份包完整性
+#    -> 解压新版到暂存目录并验证(通过后才删除旧程序)
+#    -> 删除服务/快捷方式/注册表值/旧程序目录
+#    -> 部署新版 -> 还原 Mods -> 按配置处理备份包 -> (可选)归档新版压缩包
 #  用法: 双击同目录 SimpleModReplacer.bat (自动请求管理员权限)
-#        自动化: powershell -ExecutionPolicy Bypass -File .\SimpleModReplacer.ps1 -Yes
+#        非交互: powershell -ExecutionPolicy Bypass -File .\SimpleModReplacer.ps1 -Yes
 #  日志: 脚本同目录 SimpleModReplacer_<时间戳>.log
 # ============================================================
 param(
-    [switch]$Yes          # 跳过交互确认 (供自动化 / AI agent 调用)
+    [switch]$Yes          # 非交互模式: 跳过执行确认
 )
 
-# ==================== 用户配置区 (关键参数) ====================
+# ==================== 用户配置区 ====================
 # 以下为虚构示例: ValleyKit —— 一款虚构的《星露谷物语》(Stardew Valley) 模组管理器
 # (星露谷物语官方默许 SMAPI 模组生态; 请把所有路径/残留项替换成你自己目标程序的值)
 
@@ -159,7 +159,7 @@ if ([string]::IsNullOrWhiteSpace($DeleteDir)) {
     else { $preWarns += "旧程序目录当前不存在(全新安装模式), 将只部署新版: $DeleteDir" }
 }
 
-# 3. 压缩包: 必须存在且是文件 (这是上次事故的根因 -> 致命检查)
+# 3. 压缩包: 必须存在且为文件
 if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
     $preErrors += '$ArchivePath (新版压缩包) 不能为空'
 } elseif (-not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
@@ -301,7 +301,7 @@ if ($BackupSrc -and (Test-Path -LiteralPath $BackupSrc -PathType Container)) {
 }
 Write-Log '------------------------------------------------------------'
 
-# ---------- 步骤2: 暂存解压新版到临时目录 (旧程序此时完好无损) ----------
+# ---------- 步骤2: 暂存解压新版到暂存目录 (此阶段不修改旧程序) ----------
 Write-Log '[步骤2] 暂存解压新版到临时目录 (验证通过前不删除旧程序)'
 New-Item -ItemType Directory -Path $Stage -Force | Out-Null
 & $sz x $ArchivePath "-o$Stage" -y 2>&1 | ForEach-Object { Write-Log "  7z> $_" }
@@ -322,7 +322,7 @@ if ($stageCount -eq 0) {
 Write-Log "[OK] 暂存解压验证通过 ($stageCount 个顶层项), 位于 $Stage"
 Write-Log '------------------------------------------------------------'
 
-# ---------- 步骤3: 删除残留 (至此才动旧程序) ----------
+# ---------- 步骤3: 删除残留 (本步骤开始修改旧程序) ----------
 Write-Log '[步骤3] 删除残留'
 
 # 3.1 服务
