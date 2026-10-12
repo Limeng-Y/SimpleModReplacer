@@ -1,4 +1,4 @@
-﻿# ============================================================
+﻿﻿# ============================================================
 #  Simple Mod Replacer
 #  流程:
 #    预检(不修改任何文件) -> 确认
@@ -265,8 +265,8 @@ if ($NewVersionStore) { Write-Log "  6b. 新版压缩包归档到: $NewVersionSt
 
 if (-not ($Yes -or $AutoConfirm)) {
     Write-Host ''
-    $ans = Read-Host '确认执行? 输入 Y 继续, 其它键取消 (未改动任何文件)'
-    if ($ans -ne 'Y' -and $ans -ne 'y') {
+    $ans = (Read-Host '确认执行? 输入 Y 继续, 其它键取消 (未改动任何文件)').Trim().ToUpper()
+    if ($ans -ne 'Y') {
         Write-Log '[取消] 用户放弃执行, 未做任何修改'
         exit 0
     }
